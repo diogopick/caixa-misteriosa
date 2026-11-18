@@ -1,0 +1,38 @@
+name: Monitor Caixa Misteriosa
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # a cada 10 minutos (o GitHub pode atrasar alguns minutos)
+  workflow_dispatch:          # permite rodar na mão pelo botão "Run workflow"
+
+permissions:
+  contents: write             # para salvar o estado.json no repositório
+
+concurrency:
+  group: monitor-caixa
+  cancel-in-progress: false
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verificar página
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python verificar.py
+
+      - name: Salvar estado (só se mudou)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          [ -f estado.json ] || exit 0
+          git add estado.json
+          git diff --cached --quiet || (git commit -m "Atualiza estado" && git push)
