@@ -11,6 +11,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -51,15 +53,29 @@ def ler_contador(texto: str, rotulo: str):
     return int(re.sub(r"\D", "", m.group(1)))
 
 
-def enviar_telegram(mensagem: str) -> None:
+def enviar_telegram(mensagem: str, tentativas: int = 3) -> bool:
+    """Envia a mensagem. Tenta algumas vezes, porque a API do Telegram às vezes demora."""
     if not TOKEN or not CHAT_ID:
         print("[aviso] Telegram não configurado. Mensagem:\n" + mensagem)
-        return
+        return False
     dados = urllib.parse.urlencode(
         {"chat_id": CHAT_ID, "text": mensagem, "disable_web_page_preview": "true"}
     ).encode()
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    urllib.request.urlopen(url, data=dados, timeout=30)
+    for tentativa in range(1, tentativas + 1):
+        try:
+            urllib.request.urlopen(url, data=dados, timeout=20)
+            print("Mensagem enviada no Telegram.")
+            return True
+        except urllib.error.HTTPError as erro:
+            # 401/404 = token errado; 400 = chat id errado. Não adianta repetir.
+            print(f"Telegram recusou ({erro.code}): {erro.read().decode(errors='replace')}")
+            if erro.code < 500:
+                return False
+        except Exception as erro:
+            print(f"Tentativa {tentativa} de envio falhou: {erro}")
+        time.sleep(5 * tentativa)
+    return False
 
 
 def carregar_estado() -> dict:
@@ -104,12 +120,12 @@ def main() -> None:
     anterior_disp = estado.get("disponiveis")
 
     if anterior_lib is None:
-        enviar_telegram(
+        enviado = enviar_telegram(
             "✅ Monitor da Caixa Misteriosa ativado!\n"
             f"Liberadas: {liberadas}\nDisponíveis: {disponiveis}\n{URL}"
         )
     elif liberadas != anterior_lib:
-        enviar_telegram(
+        enviado = enviar_telegram(
             "🎁 NOVAS CAIXAS LIBERADAS!\n"
             f"Liberadas: {anterior_lib} → {liberadas}\n"
             f"Disponíveis: {anterior_disp} → {disponiveis}\n"
@@ -117,6 +133,12 @@ def main() -> None:
         )
     else:
         print("Sem novas liberações.")
+        enviado = True
+
+    if not enviado:
+        # Não salva o estado: na próxima rodada ele detecta a mudança de novo e reenvia.
+        print("Alerta não enviado; vai tentar de novo na próxima execução.")
+        return
 
     salvar_estado({"liberadas": liberadas, "disponiveis": disponiveis, "erro_avisado": False})
 
